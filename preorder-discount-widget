@@ -1,0 +1,794 @@
+{%- comment -%}
+  ============================================================
+  ESSENTIAL PREORDER — DISCOUNT WIDGET · UNIFIED SNIPPET
+  ============================================================
+  Single snippet. Two visual designs. Zero JS duplication.
+
+  Designs:  'native'    — light / Horizon-safe (default)
+            'editorial' — dark / premium editorial
+
+  Usage (inside a Custom Liquid block):
+    {% render 'preorder-discount-widget', pw_design: 'native' %}
+    {% render 'preorder-discount-widget', pw_design: 'editorial' %}
+
+  Placement inside Theme Editor block order:
+    ▸ Variant Picker
+    ▸ ← INSERT Custom Liquid block here →
+    ▸ Buy Buttons
+
+  ----- INSTALL -----
+  1. Save as: snippets/preorder-discount-widget.liquid
+  2. In Theme Editor → Custom Liquid block, add ONE of:
+       {% render 'preorder-discount-widget', pw_design: 'native' %}
+       {% render 'preorder-discount-widget', pw_design: 'editorial' %}
+  3. App Embeds → Essential Preorder & Back in Stock → ON
+  4. Set a discount in the app (Content → Discount)
+
+  ----- PER-MERCHANT TOKENS -----
+  Native:    --pdw-active-border, --pdw-save-bg, --pdw-radius, --pdw-font
+  Editorial: --pdw-accent, --pdw-active-bg, --pdw-radius, --pdw-display-font
+
+  ----- ARCHITECTURE NOTES -----
+  • Liquid controls ONLY which CSS modifier class renders.
+  • Widget visibility is driven by [data-pdw-state] attribute — NO inline
+    style writes. CSS .essential-pdw { display:none } /
+    .essential-pdw[data-pdw-state="active"] { display:block } ensures
+    the widget is never visible before JS hydrates it, and eliminates
+    the style-attribute MutationObserver feedback loop present in v1.
+
+  JS LIFECYCLE (ported from design1 — QA-passed pattern)
+  ────────────────────────────────────────────────────────
+  • window.__pwModule guard is an OBJECT { reinit } not a boolean.
+    Subsequent script executions after Horizon section re-renders call
+    reinit() directly instead of bailing out.
+  • teardown() disconnects all observers and nulls every cached ref
+    before each reinit(). Prevents stale observers from firing into
+    detached nodes alongside fresh ones.
+  • buildCache() caches all DOM targets once per init cycle.
+  • Observers are SCOPED:
+      - observers.payment → payment button container (class attr only)
+      - observers.prices  → prices-block subtree (text / class changes)
+      - observers.fallback → document.body, self-destructs once targets found
+    No broad document.body observer watching style changes — eliminates
+    the write→observe→write feedback loop that caused blinking in v1.
+  • evaluateVariant() = isPreorderVariant() && hasDiscount() → show/hide.
+    Reads prices from [data-essential-preorder-element="regular"] and
+    [data-essential-preorder-element="compare-at"] directly — no
+    brittle span/money heuristics.
+  • All DOM writes happen synchronously inside evaluateVariant().
+    The 32 ms debounce on the observer callback is sufficient batching;
+    no rAF needed, which eliminates the __pdwPending guard complexity.
+  • shopify:section:load → reinit()  (Section Rendering API)
+  • page:loaded         → reinit()  (Horizon soft-nav completion)
+  • variant:changed     → debouncedEvaluate (product form event)
+  ============================================================
+{%- endcomment -%}
+
+{%- liquid
+  # Visual design variant. 'native' (light) | 'editorial' (dark).
+  # Passed in at render time; falls back to 'native' if omitted.
+  assign pw_design = pw_design | default: 'native'
+-%}
+
+{{- '<!-- [pdw] widget: ' | append: pw_design | append: ' -->' -}}
+
+<div
+  class="essential-pdw essential-pdw--{{ pw_design }}"
+  data-pdw-widget
+  data-pdw-design="{{ pw_design }}"
+  data-pdw-state="idle"
+  aria-live="polite"
+>
+
+  {%- comment -%} ═══ CSS — TOKENS ═══════════════════════════════════════
+    Each design gets its own token block scoped to its modifier class.
+    Structural styles (shared) follow after both token blocks.
+
+    VISIBILITY NOTE: Widget is hidden via CSS attribute selector, not
+    inline style. This prevents the style-attribute observer feedback loop.
+  ══════════════════════════════════════════════════════════════ {%- endcomment -%}
+
+  <style>
+
+    /* ── NATIVE TOKENS ──────────────────────────────────────────── */
+    .essential-pdw--native {
+      --pdw-bg:             #ffffff;
+      --pdw-bg-muted:       #fafafa;
+      --pdw-border:         #d8d8d8;
+      --pdw-active-border:  #1c1c1c;
+      --pdw-text:           #1c1c1c;
+      --pdw-label-color:    #6f6f6f;
+      --pdw-save-bg:        #1c1c1c;
+      --pdw-save-text:      #ffffff;
+      --pdw-arrow-bg:       #ffffff;
+      --pdw-arrow-border:   #d8d8d8;
+      --pdw-arrow-color:    #6f6f6f;
+      --pdw-radius:         10px;
+      --pdw-font:           'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --pdw-display-font:   var(--pdw-font);
+      --pdw-mono:           'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+      /* active card */
+      --pdw-active-bg:      #ffffff;
+      --pdw-active-text:    #1c1c1c;
+      --pdw-active-border-width: 2px;
+      /* muted card */
+      --pdw-muted-bg:       var(--pdw-bg-muted);
+      --pdw-muted-opacity:  1;
+      /* price */
+      --pdw-price-size:     20px;
+      --pdw-price-weight:   600;
+      --pdw-price-tracking: -0.01em;
+      /* label */
+      --pdw-label-muted:    #6f6f6f;
+      --pdw-label-active:   #6f6f6f;
+      /* save badge */
+      --pdw-save-radius:    6px;
+      --pdw-save-font:      var(--pdw-font);
+      --pdw-save-tracking:  0;
+      /* card padding */
+      --pdw-card-pad-v:     14px;
+      --pdw-card-pad-h:     16px;
+    }
+
+    /* ── EDITORIAL TOKENS ───────────────────────────────────────── */
+    .essential-pdw--editorial {
+      --pdw-bg:             #ffffff;
+      --pdw-bg-muted:       #f8f8f3;
+      --pdw-border:         #e5e5dc;
+      --pdw-active-border:  transparent;
+      --pdw-text:           #0a0c08;
+      --pdw-label-color:    rgba(250, 249, 245, 0.9);
+      --pdw-save-bg:        #d4ff5b;
+      --pdw-save-text:      #0a0c08;
+      --pdw-arrow-bg:       #faf9f5;
+      --pdw-arrow-border:   #e5e5dc;
+      --pdw-arrow-color:    #6c6f6a;
+      --pdw-radius:         10px;
+      --pdw-font:           'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --pdw-display-font:   'Bricolage Grotesque', Georgia, serif;
+      --pdw-mono:           'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+      /* active card */
+      --pdw-active-bg:      #0a0c08;
+      --pdw-active-text:    #faf9f5;
+      --pdw-active-border-width: 1px;
+      /* muted card */
+      --pdw-muted-bg:       var(--pdw-bg-muted);
+      --pdw-muted-opacity:  0.85;
+      /* price */
+      --pdw-price-size:     26px;
+      --pdw-price-weight:   500;
+      --pdw-price-tracking: -0.02em;
+      /* label */
+      --pdw-label-muted:    #6c6f6a;
+      --pdw-label-active:   rgba(250, 249, 245, 0.9);
+      /* save badge */
+      --pdw-save-radius:    999px;
+      --pdw-save-font:      var(--pdw-mono);
+      --pdw-save-tracking:  0.04em;
+      /* card padding */
+      --pdw-card-pad-v:     18px;
+      --pdw-card-pad-h:     20px;
+    }
+
+    /* ── STRUCTURAL STYLES (shared) ─────────────────────────────── */
+
+    /*
+      Widget hidden by default via CSS attribute selector.
+      JS flips data-pdw-state to "active" to reveal it.
+      Using an attribute selector (not inline style) means style-attribute
+      mutations are never written by us, so no observer feedback loop.
+    */
+    .essential-pdw {
+      display: none;
+      margin: 16px 0 4px;
+      font-family: var(--pdw-font);
+      color: var(--pdw-text);
+    }
+    .essential-pdw[data-pdw-state="active"] {
+      display: block;
+    }
+
+    .essential-pdw__cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      position: relative;
+    }
+
+    /* Base card */
+    .essential-pdw__card {
+      background: var(--pdw-bg);
+      border: 1px solid var(--pdw-border);
+      border-radius: var(--pdw-radius);
+      padding: var(--pdw-card-pad-v) var(--pdw-card-pad-h);
+      position: relative;
+    }
+
+    /* Active (preorder price) card */
+    .essential-pdw__card--active {
+      background: var(--pdw-active-bg);
+      color: var(--pdw-active-text);
+      border: var(--pdw-active-border-width) solid var(--pdw-active-border);
+      padding: calc(var(--pdw-card-pad-v) - var(--pdw-active-border-width) + 1px)
+               calc(var(--pdw-card-pad-h) - var(--pdw-active-border-width) + 1px);
+    }
+
+    /* Muted (compare / launch price) card */
+    .essential-pdw__card--muted {
+      background: var(--pdw-muted-bg);
+      opacity: var(--pdw-muted-opacity);
+    }
+
+    /* Labels */
+    .essential-pdw__label {
+      font-family: var(--pdw-mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--pdw-label-muted);
+      margin: 0 0 6px;
+      line-height: 1;
+    }
+    .essential-pdw__card--active .essential-pdw__label {
+      color: var(--pdw-label-active);
+      letter-spacing: 0.08em;
+    }
+
+    /* Prices */
+    .essential-pdw__price {
+      font-family: var(--pdw-display-font);
+      font-size: var(--pdw-price-size);
+      font-weight: var(--pdw-price-weight);
+      letter-spacing: var(--pdw-price-tracking);
+      line-height: 1;
+      margin: 0;
+      min-height: 1em;
+    }
+    .essential-pdw__card--muted .essential-pdw__price {
+      text-decoration: line-through;
+      opacity: 0.55;
+    }
+
+    /* Discount save badge */
+    .essential-pdw__save {
+      position: absolute;
+      top: -8px;
+      right: 12px;
+      background: var(--pdw-save-bg);
+      color: var(--pdw-save-text);
+      font-family: var(--pdw-save-font);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: var(--pdw-save-radius);
+      letter-spacing: var(--pdw-save-tracking);
+      line-height: 1.2;
+      /* Hidden when empty — JS writes value, CSS reveals */
+      display: none;
+    }
+    .essential-pdw__save:not(:empty) {
+      display: block;
+    }
+
+    /* Arrow divider */
+    .essential-pdw__arrow {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--pdw-arrow-bg);
+      border: 1px solid var(--pdw-arrow-border);
+      color: var(--pdw-arrow-color);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      line-height: 1;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* ── Mobile ─────────────────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .essential-pdw--native .essential-pdw__card,
+      .essential-pdw--native .essential-pdw__card--active {
+        padding: 12px;
+      }
+      .essential-pdw--native .essential-pdw__card--active {
+        padding: 11px;
+      }
+      .essential-pdw--editorial .essential-pdw__card {
+        padding: 14px;
+      }
+      .essential-pdw__price {
+        font-size: calc(var(--pdw-price-size) * 0.85);
+      }
+    }
+
+  </style>
+
+  {%- comment -%} ═══ HTML STRUCTURE (shared) ════════════════════════
+    Price slots are intentionally empty — JS hydrates them.
+    data-pdw-slot is the JS target; never write prices in Liquid.
+    Visibility: controlled by data-pdw-state attribute on the root,
+    NOT by inline style. Eliminates the style-mutation observer loop.
+  ══════════════════════════════════════════════════════════════ {%- endcomment -%}
+
+  <div class="essential-pdw__cards">
+
+    {{- '<!-- active card: preorder price -->' -}}
+    <div class="essential-pdw__card essential-pdw__card--active">
+      <p class="essential-pdw__label">Early bird</p>
+      <p class="essential-pdw__price" data-pdw-slot="preorder-price"></p>
+      <span class="essential-pdw__save" data-pdw-slot="discount-badge" aria-label="Discount"></span>
+    </div>
+
+    {{- '<!-- muted card: compare / launch price -->' -}}
+    <div class="essential-pdw__card essential-pdw__card--muted" data-pdw-slot="muted-card">
+      <p class="essential-pdw__label">Launch price</p>
+      <p class="essential-pdw__price" data-pdw-slot="compare-price"></p>
+    </div>
+
+    <div class="essential-pdw__arrow" aria-hidden="true">›</div>
+
+  </div>
+
+</div>
+
+{%- comment -%} ═══ JS — SHARED MODULE ══════════════════════════════
+  Boots once per page (window.__pwModule object guard).
+  Subsequent {% render %} calls on the same page skip re-registration.
+  Section re-renders (Horizon Section Rendering API) call reinit()
+  via the stored reference — teardown first, then fresh init.
+
+  BLINKING ROOT-CAUSE FIX SUMMARY
+  ────────────────────────────────
+  Old implementation problems:
+  [X] Boolean window.__pwModule guard — section re-renders bailed out,
+      leaving stale observers on detached nodes + widget with no JS.
+  [X] document.body observer with attributeFilter: ['style'] — widget's
+      own display writes triggered the observer, creating a feedback loop
+      the self-filter only partially broke. Caused repeated hydration cycles.
+  [X] Brittle price reading (moneyEls heuristics) — returned wrong elements
+      on some variants, causing incorrect hydration or missed updates.
+  [X] rAF + __pdwPending guard — complex, still allowed multiple queued
+      frames during rapid variant switches.
+
+  This implementation fixes all four:
+  [✓] Object guard { reinit } — case A/B pattern from design1 (QA-passed).
+  [✓] SCOPED observers only — prices-block and payment container. NO broad
+      document.body observer, NO style-attribute watching.
+  [✓] Explicit price selectors — [data-essential-preorder-element="regular"]
+      and [data-essential-preorder-element="compare-at"] as documented in
+      the app's DOM contract. No heuristics.
+  [✓] No rAF — 32 ms debounce on observer callbacks is sufficient batching.
+      All DOM writes are synchronous inside evaluateVariant(), single pass.
+
+  OBSERVER STRATEGY
+  ─────────────────
+  observers.payment  → payment button container, class attribute only.
+                       Fires when Essential Preorder app adds/removes its
+                       active/inactive classes during variant switches.
+  observers.prices   → prices-block subtree, full content + attrs.
+                       Fires when app updates price text on variant switch.
+  observers.fallback → document.body, childList only, self-destructs.
+                       Used only when payment or prices-block not yet in DOM
+                       (e.g. app still rendering on page load). Disconnects
+                       once both targets are found and primary observers set.
+
+  EVALUATION LOGIC
+  ────────────────
+  evaluateVariant():
+    isPreorderVariant()  → .essential-preorder-container-active present
+                           AND payment container NOT marked inactive
+    hasDiscount()        → compare-at price > regular price (both numeric)
+    → both true:  hydrateWidget() then set data-pdw-state="active"
+    → either false: set data-pdw-state="idle" (CSS hides widget)
+
+  SECTION RELOAD SUPPORT
+  ──────────────────────
+  shopify:section:load → reinit()  (Horizon Section Rendering API)
+  page:loaded          → reinit()  (Horizon soft-nav completion event)
+  variant:changed      → debouncedEvaluate (product form custom event)
+  DOMContentLoaded     → init()    (standard page load)
+══════════════════════════════════════════════════════════ {%- endcomment -%}
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── CONFIG ─────────────────────────────────────────────────── */
+  var CONFIG = {
+    appEmbed:      'essential-preorder-app-embed',
+    activeClass:   'essential-preorder-container-active',
+    inactiveClass: 'essential-preorder-containers-inactive',
+    paymentBtn:    '.shopify-payment-button, [data-shopify="payment-button"]',
+    pricesBlock:   '[data-essential-preorder-element="prices-block"]',
+    regularPrice:  '[data-essential-preorder-element="regular"]',
+    comparePrice:  '[data-essential-preorder-element="compare-at"]',
+    productForm:   'form[action="/cart/add"]',
+    widget:        '[data-pdw-widget]',
+    slotPreorder:  '[data-pdw-slot="preorder-price"]',
+    slotCompare:   '[data-pdw-slot="compare-price"]',
+    slotBadge:     '[data-pdw-slot="discount-badge"]',
+    slotMuted:     '[data-pdw-slot="muted-card"]',
+    debounceMs:    32
+  };
+
+  /* ── CACHE ───────────────────────────────────────────────────── */
+  /*
+    All DOM targets cached once per init() cycle.
+    teardown() nulls every key before reinit() so we never hold
+    references to detached nodes from previous section renders.
+  */
+  var cache = {
+    widget:      null,
+    slotPreorder: null,
+    slotCompare:  null,
+    slotBadge:    null,
+    slotMuted:    null,
+    payment:      null
+  };
+
+  function buildCache() {
+    cache.widget      = document.querySelector(CONFIG.widget);
+    cache.slotPreorder = cache.widget && cache.widget.querySelector(CONFIG.slotPreorder);
+    cache.slotCompare  = cache.widget && cache.widget.querySelector(CONFIG.slotCompare);
+    cache.slotBadge    = cache.widget && cache.widget.querySelector(CONFIG.slotBadge);
+    cache.slotMuted    = cache.widget && cache.widget.querySelector(CONFIG.slotMuted);
+    cache.payment      = document.querySelector(CONFIG.paymentBtn);
+  }
+
+  /*
+    lastState — tracks every value currently written to the DOM.
+    ─────────────────────────────────────────────────────────────
+    WHY THIS EXISTS:
+    evaluateVariant() can fire many times per second (observer debounce is
+    only 32 ms, and the Essential Preorder app's own observers can trigger
+    ours indirectly). Without this guard, showWidget() and hideWidget()
+    write to the DOM on every call — setAttribute, style.display, textContent
+    — even when nothing has changed. Those writes are DOM mutations. External
+    observers (the app, the theme) can catch them and trigger their own
+    updates, which mutate pricesBlock, which fires our observer again.
+    Result: the blinking loop the user sees in DevTools.
+
+    With lastState, every write is preceded by an equality check.
+    If the value hasn't changed, the DOM is not touched. Zero mutations →
+    zero cascading observer events → no blinking.
+
+    lastState is reset in teardown() so the next reinit() starts clean
+    and always writes the initial values to the fresh DOM nodes.
+  */
+  var lastState = {
+    widgetVisible: null,   /* 'active' | 'idle' | null (unknown) */
+    preorderPrice: null,
+    comparePrice:  null,
+    badge:         null,
+    mutedVisible:  null    /* true | false | null */
+  };
+
+  function resetLastState() {
+    lastState.widgetVisible = null;
+    lastState.preorderPrice = null;
+    lastState.comparePrice  = null;
+    lastState.badge         = null;
+    lastState.mutedVisible  = null;
+  }
+
+  /* ── OBSERVERS ───────────────────────────────────────────────── */
+  var observers = { payment: null, prices: null, fallback: null };
+
+  function teardown() {
+    if (observers.payment)  { observers.payment.disconnect();  observers.payment  = null; }
+    if (observers.prices)   { observers.prices.disconnect();   observers.prices   = null; }
+    if (observers.fallback) { observers.fallback.disconnect(); observers.fallback = null; }
+    var keys = Object.keys(cache);
+    for (var i = 0; i < keys.length; i++) { cache[keys[i]] = null; }
+    /* Reset so the next init() writes all values to the fresh DOM nodes */
+    resetLastState();
+  }
+
+  /* ── UTILITIES ───────────────────────────────────────────────── */
+  function debounce(fn, ms) {
+    var t;
+    return function () { clearTimeout(t); t = setTimeout(fn, ms); };
+  }
+
+  function parsePrice(text) {
+    /* Handles both period and comma decimal separators (€90,00 → 90.00) */
+    var s = (text || '').replace(/[^0-9.,]/g, '');
+    /* If both separators present, treat last one as decimal */
+    if (s.indexOf(',') !== -1 && s.indexOf('.') !== -1) {
+      /* e.g. "1.234,56" → "1234.56" */
+      s = s.replace('.', '').replace(',', '.');
+    } else {
+      s = s.replace(',', '.');
+    }
+    return parseFloat(s) || 0;
+  }
+
+  /* ── EVALUATION ──────────────────────────────────────────────── */
+  function isPreorderVariant() {
+    /*
+      Essential Preorder marks the active variant by adding
+      .essential-preorder-container-active to a container element.
+      It also adds .essential-preorder-containers-inactive to the
+      payment button container when a variant is NOT a preorder.
+      Check both signals.
+    */
+    if (cache.payment && cache.payment.classList.contains(CONFIG.inactiveClass)) {
+      return false;
+    }
+    return !!document.querySelector('.' + CONFIG.activeClass);
+  }
+
+  function hasDiscount() {
+    /*
+      Only show the widget when the app has configured a discount:
+      compare-at price must exist and be strictly greater than
+      the preorder (regular) price.
+    */
+    var rEl = document.querySelector(CONFIG.regularPrice);
+    var cEl = document.querySelector(CONFIG.comparePrice);
+    if (!rEl || !cEl) return false;
+    var rTxt = (rEl.textContent || '').trim();
+    var cTxt = (cEl.textContent || '').trim();
+    if (!rTxt || !cTxt) return false;
+    return parsePrice(cTxt) > parsePrice(rTxt);
+  }
+
+  /* ── HYDRATION ───────────────────────────────────────────────── */
+  /*
+    Every write is gated on lastState. If the value hasn't changed,
+    the DOM is not touched at all — no mutation fires, no cascade.
+
+    This is the fix for the blinking: even if evaluateVariant() is
+    called 50 times per second with the same preorder variant, only
+    the very first call actually writes to the DOM. All subsequent
+    calls hit the equality checks and return without any DOM mutation.
+  */
+  function hydrateWidget() {
+    var rEl = document.querySelector(CONFIG.regularPrice);
+    var cEl = document.querySelector(CONFIG.comparePrice);
+    if (!rEl) return;
+
+    var rTxt = (rEl.textContent || '').trim();
+    var cTxt = (cEl ? cEl.textContent || '' : '').trim();
+    var rNum = parsePrice(rTxt);
+    var cNum = parsePrice(cTxt);
+
+    /* Preorder price — write only if value changed */
+    var displayPrice = rTxt || '\u2014';
+    if (lastState.preorderPrice !== displayPrice) {
+      if (cache.slotPreorder) cache.slotPreorder.textContent = displayPrice;
+      lastState.preorderPrice = displayPrice;
+    }
+
+    /* Discount badge — write only if value changed */
+    var badge = '';
+    if (cNum > rNum && cNum > 0) {
+      var pct = Math.round(((cNum - rNum) / cNum) * 100);
+      if (pct > 0) badge = '\u2212' + pct + '%';
+    }
+    if (lastState.badge !== badge) {
+      if (cache.slotBadge) cache.slotBadge.textContent = badge;
+      lastState.badge = badge;
+    }
+
+    /* Compare price + muted card — write only if value or visibility changed */
+    var showMuted = !!(cTxt && cNum > rNum);
+    if (showMuted) {
+      if (lastState.comparePrice !== cTxt) {
+        if (cache.slotCompare) cache.slotCompare.textContent = cTxt;
+        lastState.comparePrice = cTxt;
+      }
+      if (lastState.mutedVisible !== true) {
+        if (cache.slotMuted) cache.slotMuted.style.display = '';
+        lastState.mutedVisible = true;
+      }
+    } else {
+      if (lastState.comparePrice !== '') {
+        if (cache.slotCompare) cache.slotCompare.textContent = '';
+        lastState.comparePrice = '';
+      }
+      if (lastState.mutedVisible !== false) {
+        if (cache.slotMuted) cache.slotMuted.style.display = 'none';
+        lastState.mutedVisible = false;
+      }
+    }
+  }
+
+  /* ── WIDGET VISIBILITY ───────────────────────────────────────── */
+  /*
+    Both functions guard setAttribute with a lastState check.
+    setAttribute fires a DOM mutation even if the value is identical
+    to what's already there. External observers (app / theme) can catch
+    that mutation and chain into their own DOM updates, which propagate
+    back to our observers.prices — completing the blinking loop.
+    The guard ensures we only setAttribute when the state actually changes.
+  */
+  function showWidget() {
+    if (!cache.widget) return;
+    hydrateWidget();
+    if (lastState.widgetVisible !== 'active') {
+      cache.widget.setAttribute('data-pdw-state', 'active');
+      lastState.widgetVisible = 'active';
+    }
+  }
+
+  function hideWidget() {
+    if (!cache.widget) return;
+    if (lastState.widgetVisible !== 'idle') {
+      cache.widget.setAttribute('data-pdw-state', 'idle');
+      lastState.widgetVisible = 'idle';
+      /*
+        Reset tracked slot values so the next showWidget() writes
+        fresh content to the DOM (the widget may have been removed
+        and re-added by the Section Rendering API between hide and show).
+      */
+      lastState.preorderPrice = null;
+      lastState.comparePrice  = null;
+      lastState.badge         = null;
+      lastState.mutedVisible  = null;
+    }
+  }
+
+  /* ── EVALUATE ────────────────────────────────────────────────── */
+  function evaluateVariant() {
+    if (isPreorderVariant() && hasDiscount()) {
+      showWidget();
+    } else {
+      hideWidget();
+    }
+  }
+
+  var debouncedEvaluate = debounce(evaluateVariant, CONFIG.debounceMs);
+
+  /* ── WATCHERS ────────────────────────────────────────────────── */
+  function watchForVariantChanges() {
+    var pricesBlock = document.querySelector(CONFIG.pricesBlock);
+
+    /*
+      observers.payment: watches the payment button container for class
+      changes only. Essential Preorder toggles inactiveClass on this
+      element when switching between preorder and regular variants.
+      Narrow attributeFilter means we only react to meaningful signals,
+      not to unrelated DOM activity.
+    */
+    if (cache.payment) {
+      observers.payment = new MutationObserver(debouncedEvaluate);
+      observers.payment.observe(cache.payment, {
+        attributes:      true,
+        attributeFilter: ['class']
+      });
+    }
+
+    /*
+      observers.prices: watches the prices-block subtree for any content
+      change. This fires when the app updates price text during a variant
+      switch. Both observers call debouncedEvaluate (not separate hydrate)
+      so hasDiscount() always runs against the fully-updated DOM.
+    */
+    if (pricesBlock) {
+      observers.prices = new MutationObserver(debouncedEvaluate);
+      observers.prices.observe(pricesBlock, {
+        childList:     true,
+        subtree:       true,
+        attributes:    true,
+        characterData: true
+      });
+    }
+
+    /*
+      observers.fallback: used ONLY when one or both primary targets are
+      absent at init time (app still rendering). Watches document.body
+      childList only — not attributes, not characterData — so it doesn't
+      catch style/class churn. Self-destructs once both targets are found.
+    */
+    if (!cache.payment || !pricesBlock) {
+      var debouncedFallback = debounce(function () {
+        var p = document.querySelector(CONFIG.paymentBtn);
+        var b = document.querySelector(CONFIG.pricesBlock);
+        if (p && b) {
+          if (observers.fallback) {
+            observers.fallback.disconnect();
+            observers.fallback = null;
+          }
+          cache.payment = p;
+          watchForVariantChanges();
+        }
+      }, CONFIG.debounceMs);
+
+      observers.fallback = new MutationObserver(debouncedFallback);
+      observers.fallback.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  function watchForVariantEvent() {
+    /*
+      Some themes (and the Essential Preorder app itself) dispatch a
+      'variant:changed' custom event on the product form. This provides
+      an additional signal for themes that don't use Section Rendering.
+    */
+    var form = document.querySelector(CONFIG.productForm);
+    if (form) form.addEventListener('variant:changed', debouncedEvaluate);
+  }
+
+  /* ── INIT / REINIT ───────────────────────────────────────────── */
+  function init() {
+    /* Guardrail: Essential Preorder app embed must be present */
+    if (!document.querySelector(CONFIG.appEmbed)) return;
+    /* Widget element must exist */
+    if (!document.querySelector(CONFIG.widget)) return;
+
+    buildCache();
+    evaluateVariant();        /* immediate check on page / section load */
+    watchForVariantChanges(); /* persistent scoped observers             */
+    watchForVariantEvent();   /* variant:changed form event              */
+  }
+
+  function reinit() {
+    /*
+      teardown() first — disconnects stale observers from the previous
+      section render and nulls cached refs. Without this, stale observers
+      on detached nodes would keep firing alongside the new ones.
+      teardown() is idempotent: safe to call even if nothing is active.
+    */
+    teardown();
+    init();
+  }
+
+  /* ── MODULE GUARD ────────────────────────────────────────────── */
+  /*
+    Object guard pattern (from design1 — QA-passed):
+    window.__pwModule is an object { reinit } not a boolean.
+
+    CASE A — First script execution on this page:
+      Register document-level section-reload listeners ONCE.
+      document is never replaced by Section Rendering API, so these
+      listeners survive for the full page lifetime without re-registration.
+
+    CASE B — Script re-runs after Horizon section re-render:
+      window.__pwModule already exists (listeners registered in case A).
+      Call reinit() directly: teardown stale state, init against fresh DOM.
+      This is the critical fix for "widget dies after variant switch" bug.
+  */
+  if (!window.__pwModule) {
+
+    /* CASE A */
+    window.__pwModule = { reinit: reinit };
+
+    /*
+      shopify:section:load — Horizon Section Rendering API.
+      Fired when any section finishes re-rendering after a variant switch.
+      Primary trigger for Horizon-based stores.
+    */
+    document.addEventListener('shopify:section:load', reinit);
+
+    /*
+      page:loaded — Horizon's soft-navigation completion event.
+      Some Horizon versions fire this instead of (or alongside)
+      shopify:section:load. Calling reinit() twice is safe:
+      teardown() is idempotent and the debounce absorbs rapid bursts.
+    */
+    document.addEventListener('page:loaded', reinit);
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+
+  } else {
+
+    /* CASE B — section re-render, reinit against fresh DOM */
+    window.__pwModule.reinit();
+
+  }
+
+})();
+</script>
