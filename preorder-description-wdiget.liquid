@@ -1,0 +1,665 @@
+{% comment %}
+  ============================================================
+  SNIPPET:   preorder-description-widget.liquid
+  VERSION:   2.0 — unified (look1 + look2 merged)
+  REPLACES:  preorder-description-widget--look1.liquid
+             preorder-description-widget--look2.liquid
+
+  RENDER:
+    {% render 'preorder-description-widget', pw_design: 'look1' %}
+    {% render 'preorder-description-widget', pw_design: 'look2' %}
+
+  pw_design values:
+    look1  →  dark / branded  (JetBrains Mono labels, lime icon accents, #0a0c08 bg)
+    look2  →  light / native  (Inter only, #faf9f5 bg, border, no label column)
+
+  PLACEMENT:
+    buy-buttons.liquid — after endif, inside span wrapper.
+    Same placement as the look1 / look2 files it replaces.
+
+  ────────────────────────────────────────────────────────────
+  NAMESPACE — does NOT overlap with discount widget:
+
+    data attr  →  data-pdw-desc="{{ pw_design }}"
+                  "desc" infix prevents collision with discount widget's
+                  data-pdw / data-pdw-design attributes.
+
+    JS guard   →  window.__pdwDescInitialised
+                  Renamed from __pdwInitialised. The old name was shared
+                  across both description looks AND the discount widget,
+                  meaning whichever script ran second was silently no-opped.
+                  Each widget family now owns its own guard.
+
+    CSS prefix →  .ess-info-desc  (was .ess-info-rows / .ess-info-rows--branded)
+                  Avoids the .ess-info-rows collision noted in look2's comment block.
+
+  ────────────────────────────────────────────────────────────
+  ARCHITECTURE:
+    ✅ Widget always in DOM — no Liquid {% if %} guard
+    ✅ CSS hides widget by default (display: none)
+    ✅ JS sets data-widget-state="ready" to show
+    ✅ isPreorderVariant() — two-signal class check (mirrors discount widget)
+    ✅ MutationObserver A (payment class) + B (body childList) + C (button attr)
+    ✅ Polling safety net — 300ms / 5s max
+    ✅ Single-execution guard: window.__pdwDescInitialised
+    ✅ JS fires once regardless of which design is rendered
+
+  ────────────────────────────────────────────────────────────
+  TOKENS PATTERN (mirrors discount widget handoff):
+    Section 1  →  CSS token block per design  ← SUPPORT EDITS HERE ONLY
+    Section 2  →  Structural CSS (shared)     ← do not edit
+    Section 3  →  Layout overrides per design ← do not edit
+
+  ────────────────────────────────────────────────────────────
+  DATA SOURCES — INVENTORY ROW:
+    Tier 1   →  [data-essential-preorder-element="inventory-limit"] text
+    Tier 1.5 →  data-essential-preorder-inventory-available on button (live)
+    Tier 2   →  window.essentialPreorderConfigs (page-render, stale)
+    Tier 3   →  hide gracefully
+  ============================================================
+{% endcomment %}
+
+{%- assign pw_design = pw_design | default: 'look1' -%}
+{%- assign pdw_product_handle = product.handle | default: '' -%}
+
+<div
+  class="ess-info-desc ess-info-desc--{{ pw_design }}"
+  data-pdw-desc="{{ pw_design }}"
+  data-widget-state="loading"
+  data-product-handle="{{ pdw_product_handle }}"
+  role="region"
+  aria-label="Preorder information"
+>
+
+  {%- comment -%} ── ROW 1: Ships / preorder description message ── {%- endcomment -%}
+  <div class="ess-info-desc__row" id="pdw-desc-row-description" data-row-state="empty">
+    <span class="ess-info-desc__icon" aria-hidden="true">
+      {%- if pw_design == 'look1' -%}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14M13 5l7 7-7 7"></path>
+        </svg>
+      {%- else -%}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="9 12 11 14 15 10"></polyline>
+        </svg>
+      {%- endif -%}
+    </span>
+    <span class="ess-info-desc__label">Ships</span>
+    <span class="ess-info-desc__text" id="pdw-desc-text-description"></span>
+  </div>
+
+  <div class="ess-info-desc__divider" id="pdw-desc-divider-1"></div>
+
+  {%- comment -%} ── ROW 2: Pay now / partial payment details ── {%- endcomment -%}
+  <div class="ess-info-desc__row" id="pdw-desc-row-payment" data-row-state="empty">
+    <span class="ess-info-desc__icon" aria-hidden="true">
+      {%- if pw_design == 'look1' -%}
+        €
+      {%- else -%}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="6" width="20" height="14" rx="2"></rect>
+          <path d="M2 11h20"></path>
+        </svg>
+      {%- endif -%}
+    </span>
+    <span class="ess-info-desc__label">Pay now</span>
+    <span class="ess-info-desc__text" id="pdw-desc-text-payment"></span>
+  </div>
+
+  <div class="ess-info-desc__divider" id="pdw-desc-divider-2"></div>
+
+  {%- comment -%} ── ROW 3: Closes / inventory limit ── {%- endcomment -%}
+  <div class="ess-info-desc__row" id="pdw-desc-row-inventory" data-row-state="empty">
+    <span class="ess-info-desc__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <polyline points="12 6 12 12 16 14"></polyline>
+      </svg>
+    </span>
+    <span class="ess-info-desc__label">Closes</span>
+    <span class="ess-info-desc__text" id="pdw-desc-text-inventory"></span>
+  </div>
+
+</div>
+
+<style>
+  /* ──────────────────────────────────────────────────────────────────
+     SECTION 0 — App native suppression (shared across both designs)
+     textContent reads still work on display:none — data pipeline safe.
+  ────────────────────────────────────────────────────────────────── */
+  [data-essential-preorder-element="message"],
+  [data-essential-preorder-element="payment-details-text"],
+  [data-essential-preorder-element="inventory-limit"] {
+    display: none !important;
+  }
+
+
+  /* ──────────────────────────────────────────────────────────────────
+     SECTION 1A — TOKENS: look1 (dark / branded)
+     Support: edit this block to match merchant brand.
+     Structural rules are in Section 2 — leave those alone.
+  ────────────────────────────────────────────────────────────────── */
+  .ess-info-desc--look1 {
+    --pdw-desc-bg:              #0a0c08;
+    --pdw-desc-border:          none;
+    --pdw-desc-radius:          18px;
+    --pdw-desc-padding:         4px 20px;
+    --pdw-desc-color:           #faf9f5;           /* body text */
+
+    --pdw-desc-icon-size:       28px;
+    --pdw-desc-icon-radius:     50%;
+    --pdw-desc-icon-bg:         rgba(212, 255, 91, 0.15);  /* lime tint */
+    --pdw-desc-icon-color:      #d4ff5b;           /* lime accent */
+    --pdw-desc-icon-font:       'JetBrains Mono', ui-monospace, monospace;
+    --pdw-desc-icon-font-size:  14px;
+
+    --pdw-desc-label-font:      'JetBrains Mono', ui-monospace, monospace;
+    --pdw-desc-label-size:      11px;
+    --pdw-desc-label-color:     rgba(250, 249, 245, 0.6);
+    --pdw-desc-label-display:   block;             /* look1 shows labels */
+
+    --pdw-desc-text-font:       'Inter', sans-serif;
+    --pdw-desc-text-size:       14px;
+    --pdw-desc-text-weight:     500;
+    --pdw-desc-text-color:      #faf9f5;
+    --pdw-desc-text-align:      right;
+
+    --pdw-desc-divider-color:   rgba(250, 249, 245, 0.1);
+    --pdw-desc-row-padding:     18px 0;
+  }
+
+  /* ──────────────────────────────────────────────────────────────────
+     SECTION 1B — TOKENS: look2 (light / native)
+     Support: edit this block to match merchant brand.
+  ────────────────────────────────────────────────────────────────── */
+  .ess-info-desc--look2 {
+    --pdw-desc-bg:              #faf9f5;
+    --pdw-desc-border:          1px solid #e5e5dc;
+    --pdw-desc-radius:          18px;
+    --pdw-desc-padding:         8px 16px;
+    --pdw-desc-color:           #1c1c1c;
+
+    --pdw-desc-icon-size:       22px;
+    --pdw-desc-icon-radius:     0;                 /* no bg pill for look2 */
+    --pdw-desc-icon-bg:         transparent;
+    --pdw-desc-icon-color:      #1c1c1c;
+    --pdw-desc-icon-font:       inherit;
+    --pdw-desc-icon-font-size:  inherit;
+
+    --pdw-desc-label-font:      inherit;           /* unused — label hidden */
+    --pdw-desc-label-size:      0;
+    --pdw-desc-label-color:     transparent;
+    --pdw-desc-label-display:   none;              /* look2 has no label column */
+
+    --pdw-desc-text-font:       'Inter', sans-serif;
+    --pdw-desc-text-size:       14px;
+    --pdw-desc-text-weight:     400;
+    --pdw-desc-text-color:      #1c1c1c;
+    --pdw-desc-text-align:      left;
+
+    --pdw-desc-divider-color:   #e5e5dc;
+    --pdw-desc-row-padding:     14px 0;
+  }
+
+
+  /* ──────────────────────────────────────────────────────────────────
+     SECTION 2 — STRUCTURAL (shared; do not edit)
+     All rules scoped to [data-pdw-desc] to prevent any bleed into
+     theme elements or the discount widget.
+  ────────────────────────────────────────────────────────────────── */
+
+  /* Widget: hidden by default — JS sets data-widget-state="ready" to reveal */
+  [data-pdw-desc] {
+    display: none;
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 20px;
+    contain: layout style;
+
+    background:    var(--pdw-desc-bg);
+    border:        var(--pdw-desc-border);
+    border-radius: var(--pdw-desc-radius);
+    padding:       var(--pdw-desc-padding);
+    color:         var(--pdw-desc-color);
+  }
+
+  /* !important blocks Horizon / Dawn theme overrides on nested elements */
+  [data-pdw-desc][data-widget-state="ready"] {
+    display: block !important;
+  }
+
+  /* Rows: hidden by default — JS sets data-row-state="populated" to reveal */
+  [data-pdw-desc] .ess-info-desc__row {
+    display: none;
+    padding: var(--pdw-desc-row-padding);
+  }
+
+  /* Dividers: hidden by default — JS sets data-divider-state="visible" to reveal */
+  [data-pdw-desc] .ess-info-desc__divider {
+    display: none;
+    height: 1px;
+    background: var(--pdw-desc-divider-color);
+  }
+
+  [data-pdw-desc] .ess-info-desc__divider[data-divider-state="visible"] {
+    display: block !important;
+  }
+
+  /* Icon */
+  [data-pdw-desc] .ess-info-desc__icon {
+    flex-shrink: 0;
+    width:        var(--pdw-desc-icon-size);
+    height:       var(--pdw-desc-icon-size);
+    border-radius: var(--pdw-desc-icon-radius);
+    background:   var(--pdw-desc-icon-bg);
+    color:        var(--pdw-desc-icon-color);
+    display:      flex;
+    align-items:  center;
+    justify-content: center;
+    font-family:  var(--pdw-desc-icon-font);
+    font-size:    var(--pdw-desc-icon-font-size);
+    font-weight:  500;
+  }
+
+  [data-pdw-desc] .ess-info-desc__icon svg {
+    width:  14px;
+    height: 14px;
+  }
+
+  /* Label */
+  [data-pdw-desc] .ess-info-desc__label {
+    display:       var(--pdw-desc-label-display);
+    font-family:   var(--pdw-desc-label-font);
+    font-size:     var(--pdw-desc-label-size);
+    font-weight:   500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color:         var(--pdw-desc-label-color);
+    white-space:   nowrap;
+  }
+
+  /* Text */
+  [data-pdw-desc] .ess-info-desc__text {
+    font-family: var(--pdw-desc-text-font);
+    font-size:   var(--pdw-desc-text-size);
+    font-weight: var(--pdw-desc-text-weight);
+    color:       var(--pdw-desc-text-color);
+    text-align:  var(--pdw-desc-text-align);
+    line-height: 1.45;
+  }
+
+
+  /* ──────────────────────────────────────────────────────────────────
+     SECTION 3 — LAYOUT OVERRIDES per design (do not edit)
+     Row display model differs between designs:
+       look1 → grid  (icon | label | text — text right-aligned)
+       look2 → flex  (icon | text — text left-aligned, no label)
+  ────────────────────────────────────────────────────────────────── */
+
+  /* look1: 3-column grid */
+  [data-pdw-desc="look1"] .ess-info-desc__row[data-row-state="populated"] {
+    display:               grid !important;
+    grid-template-columns: var(--pdw-desc-icon-size) auto 1fr;
+    align-items:           center;
+    gap:                   12px;
+  }
+
+  /* look2: 2-item flex row (label hidden via token, takes no space) */
+  [data-pdw-desc="look2"] .ess-info-desc__row[data-row-state="populated"] {
+    display:     flex !important;
+    align-items: center;
+    gap:         14px;
+  }
+
+  /* look2 icon: fill SVG to full container (no bg pill, bare stroke) */
+  [data-pdw-desc="look2"] .ess-info-desc__icon svg {
+    width:  100%;
+    height: 100%;
+  }
+</style>
+
+<script>
+/*
+  __pdwDescInitialised — description widget guard.
+  Deliberately distinct from __pdwInitialised (discount widget) so both
+  widgets can coexist on the same PDP without one silencing the other.
+*/
+if (!window.__pdwDescInitialised) {
+  window.__pdwDescInitialised = true;
+
+(function () {
+  'use strict';
+
+  var CONFIG = {
+    /* ── Source selectors ──────────────────────────────────────────
+       App-native spans are suppressed via CSS (display:none).
+       textContent reads still work on hidden elements — pipeline is safe.
+    ──────────────────────────────────────────────────────────────── */
+    messageEl:        '[data-essential-preorder-element="message"]',
+    paymentEl:        '[data-essential-preorder-element="payment-details-text"]',
+    inventoryEl:      '[data-essential-preorder-element="inventory-limit"]',
+
+    /* Preorder button — inventory count attribute updated live on variant switch */
+    preorderButton:   '[data-essential-preorder-element="button"]',
+    inventoryAttr:    'data-essential-preorder-inventory-available',
+
+    /* Two-signal preorder state — mirrors discount widget exactly */
+    inactiveClass:    'essential-preorder-containers-inactive',
+    activeClass:      'essential-preorder-container-active',
+
+    /* Payment button — watched for class changes on variant switch */
+    paymentContainer: '.shopify-payment-button, [data-shopify="payment-button"]',
+
+    /*
+      Widget selector — [data-pdw-desc] matches the rendered design element
+      regardless of which pw_design value was passed in Liquid.
+      Do NOT use a class selector here: classes contain the design modifier
+      and would need to be kept in sync; the attribute is design-agnostic.
+    */
+    widget: '[data-pdw-desc]',
+
+    /* Row / divider IDs — prefixed "pdw-desc-" to avoid collision
+       with discount widget IDs if both are on the same page. */
+    rowIds: {
+      description: 'pdw-desc-row-description',
+      payment:     'pdw-desc-row-payment',
+      inventory:   'pdw-desc-row-inventory'
+    },
+    textIds: {
+      description: 'pdw-desc-text-description',
+      payment:     'pdw-desc-text-payment',
+      inventory:   'pdw-desc-text-inventory'
+    },
+    dividerIds: {
+      d1: 'pdw-desc-divider-1',
+      d2: 'pdw-desc-divider-2'
+    },
+
+    gidPrefix:    'gid://shopify/ProductVariant/',
+    debounceMs:   80,
+    pollInterval: 300,
+    pollMaxMs:    5000
+  };
+
+  var cache     = { widget: null, payment: null, button: null };
+  var observers = { payment: null, body: null, button: null };
+  var poller    = null;
+
+  /* ── Utilities ──────────────────────────────────────────────────── */
+
+  function debounce(fn, ms) {
+    var t;
+    return function () { clearTimeout(t); t = setTimeout(fn, ms); };
+  }
+
+  function buildCache() {
+    cache.widget  = document.querySelector(CONFIG.widget);
+    cache.payment = document.querySelector(CONFIG.paymentContainer);
+    cache.button  = document.querySelector(CONFIG.preorderButton);
+  }
+
+  /* ── Row population ─────────────────────────────────────────────── */
+
+  /*
+    populateRow() — reads textContent from a source element hidden by CSS.
+    display:none does NOT prevent textContent reads — pipeline is safe.
+    Returns true if content was found and the row was populated.
+  */
+  function populateRow(sourceSelector, rowId, textId) {
+    var rowEl  = document.getElementById(rowId);
+    var textEl = document.getElementById(textId);
+    if (!rowEl || !textEl) return false;
+
+    var sourceEl = document.querySelector(sourceSelector);
+    var text = sourceEl ? (sourceEl.textContent || '').trim() : '';
+
+    if (text) {
+      textEl.textContent = text;
+      rowEl.setAttribute('data-row-state', 'populated');
+      return true;
+    }
+
+    rowEl.setAttribute('data-row-state', 'empty');
+    return false;
+  }
+
+  /*
+    getCurrentVariantId()
+    Priority: live form input → window.essentialPreorderConfigs fallback.
+  */
+  function getCurrentVariantId() {
+    var formInput = document.querySelector(
+      'form[data-type="add-to-cart-form"] input[name="id"]'
+    );
+    if (formInput && formInput.value) return String(formInput.value).trim();
+
+    var configs = window.essentialPreorderConfigs;
+    if (configs && configs.selectedOrFirstAvailableVariantId) {
+      return String(configs.selectedOrFirstAvailableVariantId).trim();
+    }
+    return '';
+  }
+
+  /*
+    populateDOMInventory() — TIER 1.5
+    Reads data-essential-preorder-inventory-available from the preorder button.
+    This attribute is stamped live on every variant switch — always accurate.
+    Skips if Tier 1 (app DOM text) already populated the row.
+  */
+  function populateDOMInventory() {
+    var rowEl  = document.getElementById(CONFIG.rowIds.inventory);
+    var textEl = document.getElementById(CONFIG.textIds.inventory);
+    if (!rowEl || !textEl) return false;
+    if (rowEl.getAttribute('data-row-state') === 'populated') return true;
+
+    var btn = document.querySelector(CONFIG.preorderButton);
+    if (!btn) return false;
+
+    var raw = btn.getAttribute(CONFIG.inventoryAttr);
+    if (raw === null || raw === '') return false;
+
+    var qty = parseInt(raw, 10);
+    if (isNaN(qty) || qty <= 0) return false;
+
+    textEl.textContent = qty + ' item' + (qty !== 1 ? 's' : '') + ' available for preorder';
+    rowEl.setAttribute('data-row-state', 'populated');
+    return true;
+  }
+
+  /*
+    populateInventoryFallback() — TIER 2
+    Last-resort read from window.essentialPreorderConfigs (stale, page-render).
+    Only reached when Tiers 1 and 1.5 both yield no data.
+  */
+  function populateInventoryFallback() {
+    var rowEl  = document.getElementById(CONFIG.rowIds.inventory);
+    var textEl = document.getElementById(CONFIG.textIds.inventory);
+    if (!rowEl || !textEl) return false;
+    if (rowEl.getAttribute('data-row-state') === 'populated') return true;
+
+    var configs = window.essentialPreorderConfigs;
+    if (!configs || !Array.isArray(configs.preorderCampaigns) || !configs.preorderCampaigns.length) {
+      rowEl.setAttribute('data-row-state', 'empty');
+      return false;
+    }
+
+    var currentVariantId = getCurrentVariantId();
+    if (!currentVariantId) { rowEl.setAttribute('data-row-state', 'empty'); return false; }
+
+    var matchedCampaign = null;
+    for (var i = 0; i < configs.preorderCampaigns.length; i++) {
+      var campaign = configs.preorderCampaigns[i];
+      var products = (campaign.placement && campaign.placement.specificProducts) || [];
+      for (var j = 0; j < products.length; j++) {
+        var variantId = (products[j].id || '').replace(CONFIG.gidPrefix, '');
+        if (variantId === currentVariantId) { matchedCampaign = campaign; break; }
+      }
+      if (matchedCampaign) break;
+    }
+
+    if (
+      matchedCampaign &&
+      matchedCampaign.content &&
+      matchedCampaign.content.inventoryHasLimit === true &&
+      typeof matchedCampaign.content.inventoryAvailable === 'number' &&
+      matchedCampaign.content.inventoryAvailable > 0
+    ) {
+      var limit = matchedCampaign.content.inventoryAvailable;
+      textEl.textContent = limit + ' item' + (limit !== 1 ? 's' : '') + ' available for preorder';
+      rowEl.setAttribute('data-row-state', 'populated');
+      return true;
+    }
+
+    rowEl.setAttribute('data-row-state', 'empty');
+    return false;
+  }
+
+  /* ── Dividers ───────────────────────────────────────────────────── */
+
+  /*
+    updateDividers()
+    Resolves divider visibility after all row states are set.
+    A divider is visible only when populated rows exist on both sides of it.
+
+    Divider 1 (description ↔ payment):  visible if both row 0 and row 1 are populated.
+    Divider 2 (payment ↔ inventory):    visible if row 2 is populated AND any earlier row is.
+  */
+  function updateDividers() {
+    var r0 = document.getElementById(CONFIG.rowIds.description);
+    var r1 = document.getElementById(CONFIG.rowIds.payment);
+    var r2 = document.getElementById(CONFIG.rowIds.inventory);
+
+    var p0 = r0 && r0.getAttribute('data-row-state') === 'populated';
+    var p1 = r1 && r1.getAttribute('data-row-state') === 'populated';
+    var p2 = r2 && r2.getAttribute('data-row-state') === 'populated';
+
+    var d1 = document.getElementById(CONFIG.dividerIds.d1);
+    if (d1) d1.setAttribute('data-divider-state', (p0 && p1) ? 'visible' : 'hidden');
+
+    var d2 = document.getElementById(CONFIG.dividerIds.d2);
+    if (d2) d2.setAttribute('data-divider-state', (p2 && (p0 || p1)) ? 'visible' : 'hidden');
+  }
+
+  /* ── Hydration ──────────────────────────────────────────────────── */
+
+  /*
+    hydrateWidget()
+    Populates all rows then resolves dividers.
+    Returns true if at least one row has content.
+
+    Inventory tier order: Tier 1 → Tier 1.5 → Tier 2 → Tier 3 (hide)
+  */
+  function hydrateWidget() {
+    var hasContent = false;
+
+    if (populateRow(CONFIG.messageEl,   CONFIG.rowIds.description, CONFIG.textIds.description)) hasContent = true;
+    if (populateRow(CONFIG.paymentEl,   CONFIG.rowIds.payment,     CONFIG.textIds.payment))     hasContent = true;
+
+    if      (populateRow(CONFIG.inventoryEl, CONFIG.rowIds.inventory, CONFIG.textIds.inventory)) hasContent = true;
+    else if (populateDOMInventory())                                                              hasContent = true;
+    else if (populateInventoryFallback())                                                         hasContent = true;
+
+    updateDividers();
+    return hasContent;
+  }
+
+  /* ── Widget state ───────────────────────────────────────────────── */
+
+  function showWidget() { if (cache.widget) cache.widget.setAttribute('data-widget-state', 'ready');   }
+  function hideWidget() { if (cache.widget) cache.widget.setAttribute('data-widget-state', 'loading'); }
+
+  /*
+    isPreorderVariant() — two-signal check (mirrors discount widget exactly).
+    Signal 1 (fast-exit): inactiveClass on payment button → not a preorder variant.
+    Signal 2: activeClass anywhere in document → preorder variant active.
+  */
+  function isPreorderVariant() {
+    if (cache.payment && cache.payment.classList.contains(CONFIG.inactiveClass)) return false;
+    return !!document.querySelector('.' + CONFIG.activeClass);
+  }
+
+  function evaluateVariant() {
+    if (!isPreorderVariant()) { hideWidget(); return; }
+    if (hydrateWidget()) { showWidget(); } else { hideWidget(); }
+  }
+
+  var debouncedEvaluate = debounce(evaluateVariant, CONFIG.debounceMs);
+
+  /* ── Observers ──────────────────────────────────────────────────── */
+
+  function stopPoller() { if (poller) { clearInterval(poller); poller = null; } }
+
+  /*
+    attachButtonObserver() — Observer C
+    Watches data-essential-preorder-inventory-available on the preorder button.
+    Observer B (childList) misses attribute-value changes on existing nodes — C fills that gap.
+    Safe re-attachment: disconnect stale observer first to avoid leaks.
+  */
+  function attachButtonObserver() {
+    if (observers.button) { observers.button.disconnect(); observers.button = null; }
+
+    var btn = document.querySelector(CONFIG.preorderButton);
+    if (!btn) return;
+
+    cache.button = btn;
+    observers.button = new MutationObserver(debouncedEvaluate);
+    observers.button.observe(btn, { attributes: true, attributeFilter: [CONFIG.inventoryAttr] });
+  }
+
+  function watchForVariantChanges() {
+    /* Observer A — Payment button class changes (preorder ↔ ATC toggle) */
+    if (cache.payment) {
+      observers.payment = new MutationObserver(debouncedEvaluate);
+      observers.payment.observe(cache.payment, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    /* Observer B — body childList: catches new app-injected nodes; re-attaches C on button swap */
+    observers.body = new MutationObserver(function () {
+      debouncedEvaluate();
+      var currentBtn = document.querySelector(CONFIG.preorderButton);
+      if (currentBtn && currentBtn !== cache.button) attachButtonObserver();
+    });
+    observers.body.observe(document.body, { childList: true, subtree: true });
+
+    /* Observer C — button attribute (live inventory count); also attached at init */
+    attachButtonObserver();
+  }
+
+  /*
+    Polling safety net — covers characterData changes inside existing spans
+    that Observer B (childList only) would miss. 300ms ticks × 5s max.
+  */
+  function startPoller() {
+    var elapsed = 0;
+    poller = setInterval(function () {
+      elapsed += CONFIG.pollInterval;
+      evaluateVariant();
+      if (elapsed >= CONFIG.pollMaxMs ||
+          (cache.widget && cache.widget.getAttribute('data-widget-state') === 'ready')) {
+        stopPoller();
+      }
+    }, CONFIG.pollInterval);
+  }
+
+  /* ── Init ───────────────────────────────────────────────────────── */
+
+  function init() {
+    var isEnabled = document.querySelector('essential-preorder-app-embed');
+    if (!isEnabled) return;
+
+    buildCache();
+    evaluateVariant();         /* immediate check on page load       */
+    watchForVariantChanges();  /* persistent variant monitoring       */
+    startPoller();             /* safety net for async text injection */
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+}());
+} /* end __pdwDescInitialised guard */
+</script>
