@@ -79,17 +79,17 @@
   data-pdw-state="idle"
   aria-live="polite"
 >
+  {%- comment -%}
+    ═══ CSS — TOKENS ═══════════════════════════════════════
+      Each design gets its own token block scoped to its modifier class.
+      Structural styles (shared) follow after both token blocks.
 
-  {%- comment -%} ═══ CSS — TOKENS ═══════════════════════════════════════
-    Each design gets its own token block scoped to its modifier class.
-    Structural styles (shared) follow after both token blocks.
-
-    VISIBILITY NOTE: Widget is hidden via CSS attribute selector, not
-    inline style. This prevents the style-attribute observer feedback loop.
-  ══════════════════════════════════════════════════════════════ {%- endcomment -%}
+      VISIBILITY NOTE: Widget is hidden via CSS attribute selector, not
+      inline style. This prevents the style-attribute observer feedback loop.
+    ══════════════════════════════════════════════════════════════
+  {%- endcomment -%}
 
   <style>
-
     /* ── NATIVE TOKENS ──────────────────────────────────────────── */
     .essential-pdw--native {
       --pdw-bg:             #ffffff;
@@ -308,18 +308,18 @@
         font-size: calc(var(--pdw-price-size) * 0.85);
       }
     }
-
   </style>
 
-  {%- comment -%} ═══ HTML STRUCTURE (shared) ════════════════════════
-    Price slots are intentionally empty — JS hydrates them.
-    data-pdw-slot is the JS target; never write prices in Liquid.
-    Visibility: controlled by data-pdw-state attribute on the root,
-    NOT by inline style. Eliminates the style-mutation observer loop.
-  ══════════════════════════════════════════════════════════════ {%- endcomment -%}
+  {%- comment -%}
+    ═══ HTML STRUCTURE (shared) ════════════════════════
+      Price slots are intentionally empty — JS hydrates them.
+      data-pdw-slot is the JS target; never write prices in Liquid.
+      Visibility: controlled by data-pdw-state attribute on the root,
+      NOT by inline style. Eliminates the style-mutation observer loop.
+    ══════════════════════════════════════════════════════════════
+  {%- endcomment -%}
 
   <div class="essential-pdw__cards">
-
     {{- '<!-- active card: preorder price -->' -}}
     <div class="essential-pdw__card essential-pdw__card--active">
       <p class="essential-pdw__label">Early bird</p>
@@ -334,116 +334,118 @@
     </div>
 
     <div class="essential-pdw__arrow" aria-hidden="true">›</div>
-
   </div>
-
 </div>
 
-{%- comment -%} ═══ JS — SHARED MODULE ══════════════════════════════
-  Boots once per page (window.__pwModule object guard).
-  Subsequent {% render %} calls on the same page skip re-registration.
-  Section re-renders (Horizon Section Rendering API) call reinit()
-  via the stored reference — teardown first, then fresh init.
+{%- comment -%}
+  ═══ JS — SHARED MODULE ══════════════════════════════
+    Boots once per page (window.__pwModule object guard).
+    Subsequent {% render %} calls on the same page skip re-registration.
+    Section re-renders (Horizon Section Rendering API) call reinit()
+    via the stored reference — teardown first, then fresh init.
 
-  BLINKING ROOT-CAUSE FIX SUMMARY
-  ────────────────────────────────
-  Old implementation problems:
-  [X] Boolean window.__pwModule guard — section re-renders bailed out,
-      leaving stale observers on detached nodes + widget with no JS.
-  [X] document.body observer with attributeFilter: ['style'] — widget's
-      own display writes triggered the observer, creating a feedback loop
-      the self-filter only partially broke. Caused repeated hydration cycles.
-  [X] Brittle price reading (moneyEls heuristics) — returned wrong elements
-      on some variants, causing incorrect hydration or missed updates.
-  [X] rAF + __pdwPending guard — complex, still allowed multiple queued
-      frames during rapid variant switches.
+    BLINKING ROOT-CAUSE FIX SUMMARY
+    ────────────────────────────────
+    Old implementation problems:
+    [X] Boolean window.__pwModule guard — section re-renders bailed out,
+        leaving stale observers on detached nodes + widget with no JS.
+    [X] document.body observer with attributeFilter: ['style'] — widget's
+        own display writes triggered the observer, creating a feedback loop
+        the self-filter only partially broke. Caused repeated hydration cycles.
+    [X] Brittle price reading (moneyEls heuristics) — returned wrong elements
+        on some variants, causing incorrect hydration or missed updates.
+    [X] rAF + __pdwPending guard — complex, still allowed multiple queued
+        frames during rapid variant switches.
 
-  This implementation fixes all four:
-  [✓] Object guard { reinit } — case A/B pattern from design1 (QA-passed).
-  [✓] SCOPED observers only — prices-block and payment container. NO broad
-      document.body observer, NO style-attribute watching.
-  [✓] Explicit price selectors — [data-essential-preorder-element="regular"]
-      and [data-essential-preorder-element="compare-at"] as documented in
-      the app's DOM contract. No heuristics.
-  [✓] No rAF — 32 ms debounce on observer callbacks is sufficient batching.
-      All DOM writes are synchronous inside evaluateVariant(), single pass.
+    This implementation fixes all four:
+    [✓] Object guard { reinit } — case A/B pattern from design1 (QA-passed).
+    [✓] SCOPED observers only — prices-block and payment container. NO broad
+        document.body observer, NO style-attribute watching.
+    [✓] Explicit price selectors — [data-essential-preorder-element="regular"]
+        and [data-essential-preorder-element="compare-at"] as documented in
+        the app's DOM contract. No heuristics.
+    [✓] No rAF — 32 ms debounce on observer callbacks is sufficient batching.
+        All DOM writes are synchronous inside evaluateVariant(), single pass.
 
-  OBSERVER STRATEGY
-  ─────────────────
-  observers.payment  → payment button container, class attribute only.
-                       Fires when Essential Preorder app adds/removes its
-                       active/inactive classes during variant switches.
-  observers.prices   → prices-block subtree, full content + attrs.
-                       Fires when app updates price text on variant switch.
-  observers.fallback → document.body, childList only, self-destructs.
-                       Used only when payment or prices-block not yet in DOM
-                       (e.g. app still rendering on page load). Disconnects
-                       once both targets are found and primary observers set.
+    OBSERVER STRATEGY
+    ─────────────────
+    observers.payment  → payment button container, class attribute only.
+                         Fires when Essential Preorder app adds/removes its
+                         active/inactive classes during variant switches.
+    observers.prices   → prices-block subtree, full content + attrs.
+                         Fires when app updates price text on variant switch.
+    observers.fallback → document.body, childList only, self-destructs.
+                         Used only when payment or prices-block not yet in DOM
+                         (e.g. app still rendering on page load). Disconnects
+                         once both targets are found and primary observers set.
 
-  EVALUATION LOGIC
-  ────────────────
-  evaluateVariant():
-    isPreorderVariant()  → .essential-preorder-container-active present
-                           AND payment container NOT marked inactive
-    hasDiscount()        → compare-at price > regular price (both numeric)
-    → both true:  hydrateWidget() then set data-pdw-state="active"
-    → either false: set data-pdw-state="idle" (CSS hides widget)
+    EVALUATION LOGIC
+    ────────────────
+    evaluateVariant():
+      isPreorderVariant()  → .essential-preorder-container-active present
+                             AND payment container NOT marked inactive
+      hasDiscount()        → compare-at price > regular price (both numeric)
+      → both true:  hydrateWidget() then set data-pdw-state="active"
+      → either false: set data-pdw-state="idle" (CSS hides widget)
 
-  SECTION RELOAD SUPPORT
-  ──────────────────────
-  shopify:section:load → reinit()  (Horizon Section Rendering API)
-  page:loaded          → reinit()  (Horizon soft-nav completion event)
-  variant:changed      → debouncedEvaluate (product form custom event)
-  DOMContentLoaded     → init()    (standard page load)
-══════════════════════════════════════════════════════════ {%- endcomment -%}
+    SECTION RELOAD SUPPORT
+    ──────────────────────
+    shopify:section:load → reinit()  (Horizon Section Rendering API)
+    page:loaded          → reinit()  (Horizon soft-nav completion event)
+    variant:changed      → debouncedEvaluate (product form custom event)
+    DOMContentLoaded     → init()    (standard page load)
+  ══════════════════════════════════════════════════════════
+{%- endcomment -%}
 
 <script>
-(function () {
-  'use strict';
+  (function () {
+    'use strict';
 
-  /* ── CONFIG ─────────────────────────────────────────────────── */
-  var CONFIG = {
-    appEmbed:      'essential-preorder-app-embed',
-    activeClass:   'essential-preorder-container-active',
-    inactiveClass: 'essential-preorder-containers-inactive',
-    paymentBtn:    '.shopify-payment-button, [data-shopify="payment-button"]',
-    pricesBlock:   '[data-essential-preorder-element="prices-block"]',
-    regularPrice:  '[data-essential-preorder-element="regular"]',
-    comparePrice:  '[data-essential-preorder-element="compare-at"]',
-    productForm:   'form[action="/cart/add"]',
-    widget:        '[data-pdw-widget]',
-    slotPreorder:  '[data-pdw-slot="preorder-price"]',
-    slotCompare:   '[data-pdw-slot="compare-price"]',
-    slotBadge:     '[data-pdw-slot="discount-badge"]',
-    slotMuted:     '[data-pdw-slot="muted-card"]',
-    debounceMs:    32
-  };
+    /* ── CONFIG ─────────────────────────────────────────────────── */
+    var CONFIG = {
+      appEmbed: 'essential-preorder-app-embed',
+      activeClass: 'essential-preorder-container-active',
+      inactiveClass: 'essential-preorder-containers-inactive',
+      paymentBtn: '.shopify-payment-button, [data-shopify="payment-button"]',
+      pricesBlock: '[data-essential-preorder-element="prices-block"]',
+      regularPrice: '[data-essential-preorder-element="regular"]',
+      comparePrice: '[data-essential-preorder-element="compare-at"]',
+      productForm: 'form[action="/cart/add"]',
+      widget: '[data-pdw-widget]',
+      slotPreorder: '[data-pdw-slot="preorder-price"]',
+      slotCompare: '[data-pdw-slot="compare-price"]',
+      slotBadge: '[data-pdw-slot="discount-badge"]',
+      slotMuted: '[data-pdw-slot="muted-card"]',
+      debounceMs: 32,
+      pollInterval: 300,
+      pollMaxMs: 5000,
+    };
 
-  /* ── CACHE ───────────────────────────────────────────────────── */
-  /*
+    /* ── CACHE ───────────────────────────────────────────────────── */
+    /*
     All DOM targets cached once per init() cycle.
     teardown() nulls every key before reinit() so we never hold
     references to detached nodes from previous section renders.
   */
-  var cache = {
-    widget:      null,
-    slotPreorder: null,
-    slotCompare:  null,
-    slotBadge:    null,
-    slotMuted:    null,
-    payment:      null
-  };
+    var cache = {
+      widget: null,
+      slotPreorder: null,
+      slotCompare: null,
+      slotBadge: null,
+      slotMuted: null,
+      payment: null,
+    };
 
-  function buildCache() {
-    cache.widget      = document.querySelector(CONFIG.widget);
-    cache.slotPreorder = cache.widget && cache.widget.querySelector(CONFIG.slotPreorder);
-    cache.slotCompare  = cache.widget && cache.widget.querySelector(CONFIG.slotCompare);
-    cache.slotBadge    = cache.widget && cache.widget.querySelector(CONFIG.slotBadge);
-    cache.slotMuted    = cache.widget && cache.widget.querySelector(CONFIG.slotMuted);
-    cache.payment      = document.querySelector(CONFIG.paymentBtn);
-  }
+    function buildCache() {
+      cache.widget = document.querySelector(CONFIG.widget);
+      cache.slotPreorder = cache.widget && cache.widget.querySelector(CONFIG.slotPreorder);
+      cache.slotCompare = cache.widget && cache.widget.querySelector(CONFIG.slotCompare);
+      cache.slotBadge = cache.widget && cache.widget.querySelector(CONFIG.slotBadge);
+      cache.slotMuted = cache.widget && cache.widget.querySelector(CONFIG.slotMuted);
+      cache.payment = document.querySelector(CONFIG.paymentBtn);
+    }
 
-  /*
+    /*
     lastState — tracks every value currently written to the DOM.
     ─────────────────────────────────────────────────────────────
     WHY THIS EXISTS:
@@ -463,86 +465,103 @@
     lastState is reset in teardown() so the next reinit() starts clean
     and always writes the initial values to the fresh DOM nodes.
   */
-  var lastState = {
-    widgetVisible: null,   /* 'active' | 'idle' | null (unknown) */
-    preorderPrice: null,
-    comparePrice:  null,
-    badge:         null,
-    mutedVisible:  null    /* true | false | null */
-  };
+    var lastState = {
+      widgetVisible: null /* 'active' | 'idle' | null (unknown) */,
+      preorderPrice: null,
+      comparePrice: null,
+      badge: null,
+      mutedVisible: null /* true | false | null */,
+    };
 
-  function resetLastState() {
-    lastState.widgetVisible = null;
-    lastState.preorderPrice = null;
-    lastState.comparePrice  = null;
-    lastState.badge         = null;
-    lastState.mutedVisible  = null;
-  }
-
-  /* ── OBSERVERS ───────────────────────────────────────────────── */
-  var observers = { payment: null, prices: null, fallback: null };
-
-  function teardown() {
-    if (observers.payment)  { observers.payment.disconnect();  observers.payment  = null; }
-    if (observers.prices)   { observers.prices.disconnect();   observers.prices   = null; }
-    if (observers.fallback) { observers.fallback.disconnect(); observers.fallback = null; }
-    var keys = Object.keys(cache);
-    for (var i = 0; i < keys.length; i++) { cache[keys[i]] = null; }
-    /* Reset so the next init() writes all values to the fresh DOM nodes */
-    resetLastState();
-  }
-
-  /* ── UTILITIES ───────────────────────────────────────────────── */
-  function debounce(fn, ms) {
-    var t;
-    return function () { clearTimeout(t); t = setTimeout(fn, ms); };
-  }
-
-  function parsePrice(text) {
-    /* Handles both period and comma decimal separators (€90,00 → 90.00) */
-    var s = (text || '').replace(/[^0-9.,]/g, '');
-    /* If both separators present, treat last one as decimal */
-    if (s.indexOf(',') !== -1 && s.indexOf('.') !== -1) {
-      /* e.g. "1.234,56" → "1234.56" */
-      s = s.replace('.', '').replace(',', '.');
-    } else {
-      s = s.replace(',', '.');
+    function resetLastState() {
+      lastState.widgetVisible = null;
+      lastState.preorderPrice = null;
+      lastState.comparePrice = null;
+      lastState.badge = null;
+      lastState.mutedVisible = null;
     }
-    return parseFloat(s) || 0;
-  }
 
-  /* ── EVALUATION ──────────────────────────────────────────────── */
-  function isPreorderVariant() {
-    /*
+    /* ── OBSERVERS ───────────────────────────────────────────────── */
+    var observers = { payment: null, prices: null, fallback: null };
+    var poller = null;
+
+
+    function teardown() {
+      stopPoller();
+      if (observers.payment) {
+        observers.payment.disconnect();
+        observers.payment = null;
+      }
+      if (observers.prices) {
+        observers.prices.disconnect();
+        observers.prices = null;
+      }
+      if (observers.fallback) {
+        observers.fallback.disconnect();
+        observers.fallback = null;
+      }
+      var keys = Object.keys(cache);
+      for (var i = 0; i < keys.length; i++) {
+        cache[keys[i]] = null;
+      }
+      /* Reset so the next init() writes all values to the fresh DOM nodes */
+      resetLastState();
+    }
+
+    /* ── UTILITIES ───────────────────────────────────────────────── */
+    function debounce(fn, ms) {
+      var t;
+      return function () {
+        clearTimeout(t);
+        t = setTimeout(fn, ms);
+      };
+    }
+
+    function parsePrice(text) {
+      /* Handles both period and comma decimal separators (€90,00 → 90.00) */
+      var s = (text || '').replace(/[^0-9.,]/g, '');
+      /* If both separators present, treat last one as decimal */
+      if (s.indexOf(',') !== -1 && s.indexOf('.') !== -1) {
+        /* e.g. "1.234,56" → "1234.56" */
+        s = s.replace('.', '').replace(',', '.');
+      } else {
+        s = s.replace(',', '.');
+      }
+      return parseFloat(s) || 0;
+    }
+
+    /* ── EVALUATION ──────────────────────────────────────────────── */
+    function isPreorderVariant() {
+      /*
       Essential Preorder marks the active variant by adding
       .essential-preorder-container-active to a container element.
       It also adds .essential-preorder-containers-inactive to the
       payment button container when a variant is NOT a preorder.
       Check both signals.
     */
-    if (cache.payment && cache.payment.classList.contains(CONFIG.inactiveClass)) {
-      return false;
+      if (cache.payment && cache.payment.classList.contains(CONFIG.inactiveClass)) {
+        return false;
+      }
+      return !!document.querySelector('.' + CONFIG.activeClass);
     }
-    return !!document.querySelector('.' + CONFIG.activeClass);
-  }
 
-  function hasDiscount() {
-    /*
+    function hasDiscount() {
+      /*
       Only show the widget when the app has configured a discount:
       compare-at price must exist and be strictly greater than
       the preorder (regular) price.
     */
-    var rEl = document.querySelector(CONFIG.regularPrice);
-    var cEl = document.querySelector(CONFIG.comparePrice);
-    if (!rEl || !cEl) return false;
-    var rTxt = (rEl.textContent || '').trim();
-    var cTxt = (cEl.textContent || '').trim();
-    if (!rTxt || !cTxt) return false;
-    return parsePrice(cTxt) > parsePrice(rTxt);
-  }
+      var rEl = document.querySelector(CONFIG.regularPrice);
+      var cEl = document.querySelector(CONFIG.comparePrice);
+      if (!rEl || !cEl) return false;
+      var rTxt = (rEl.textContent || '').trim();
+      var cTxt = (cEl.textContent || '').trim();
+      if (!rTxt || !cTxt) return false;
+      return parsePrice(cTxt) > parsePrice(rTxt);
+    }
 
-  /* ── HYDRATION ───────────────────────────────────────────────── */
-  /*
+    /* ── HYDRATION ───────────────────────────────────────────────── */
+    /*
     Every write is gated on lastState. If the value hasn't changed,
     the DOM is not touched at all — no mutation fires, no cascade.
 
@@ -551,59 +570,59 @@
     the very first call actually writes to the DOM. All subsequent
     calls hit the equality checks and return without any DOM mutation.
   */
-  function hydrateWidget() {
-    var rEl = document.querySelector(CONFIG.regularPrice);
-    var cEl = document.querySelector(CONFIG.comparePrice);
-    if (!rEl) return;
+    function hydrateWidget() {
+      var rEl = document.querySelector(CONFIG.regularPrice);
+      var cEl = document.querySelector(CONFIG.comparePrice);
+      if (!rEl) return;
 
-    var rTxt = (rEl.textContent || '').trim();
-    var cTxt = (cEl ? cEl.textContent || '' : '').trim();
-    var rNum = parsePrice(rTxt);
-    var cNum = parsePrice(cTxt);
+      var rTxt = (rEl.textContent || '').trim();
+      var cTxt = (cEl ? cEl.textContent || '' : '').trim();
+      var rNum = parsePrice(rTxt);
+      var cNum = parsePrice(cTxt);
 
-    /* Preorder price — write only if value changed */
-    var displayPrice = rTxt || '\u2014';
-    if (lastState.preorderPrice !== displayPrice) {
-      if (cache.slotPreorder) cache.slotPreorder.textContent = displayPrice;
-      lastState.preorderPrice = displayPrice;
+      /* Preorder price — write only if value changed */
+      var displayPrice = rTxt || '\u2014';
+      if (lastState.preorderPrice !== displayPrice) {
+        if (cache.slotPreorder) cache.slotPreorder.textContent = displayPrice;
+        lastState.preorderPrice = displayPrice;
+      }
+
+      /* Discount badge — write only if value changed */
+      var badge = '';
+      if (cNum > rNum && cNum > 0) {
+        var pct = Math.round(((cNum - rNum) / cNum) * 100);
+        if (pct > 0) badge = '\u2212' + pct + '%';
+      }
+      if (lastState.badge !== badge) {
+        if (cache.slotBadge) cache.slotBadge.textContent = badge;
+        lastState.badge = badge;
+      }
+
+      /* Compare price + muted card — write only if value or visibility changed */
+      var showMuted = !!(cTxt && cNum > rNum);
+      if (showMuted) {
+        if (lastState.comparePrice !== cTxt) {
+          if (cache.slotCompare) cache.slotCompare.textContent = cTxt;
+          lastState.comparePrice = cTxt;
+        }
+        if (lastState.mutedVisible !== true) {
+          if (cache.slotMuted) cache.slotMuted.style.display = '';
+          lastState.mutedVisible = true;
+        }
+      } else {
+        if (lastState.comparePrice !== '') {
+          if (cache.slotCompare) cache.slotCompare.textContent = '';
+          lastState.comparePrice = '';
+        }
+        if (lastState.mutedVisible !== false) {
+          if (cache.slotMuted) cache.slotMuted.style.display = 'none';
+          lastState.mutedVisible = false;
+        }
+      }
     }
 
-    /* Discount badge — write only if value changed */
-    var badge = '';
-    if (cNum > rNum && cNum > 0) {
-      var pct = Math.round(((cNum - rNum) / cNum) * 100);
-      if (pct > 0) badge = '\u2212' + pct + '%';
-    }
-    if (lastState.badge !== badge) {
-      if (cache.slotBadge) cache.slotBadge.textContent = badge;
-      lastState.badge = badge;
-    }
-
-    /* Compare price + muted card — write only if value or visibility changed */
-    var showMuted = !!(cTxt && cNum > rNum);
-    if (showMuted) {
-      if (lastState.comparePrice !== cTxt) {
-        if (cache.slotCompare) cache.slotCompare.textContent = cTxt;
-        lastState.comparePrice = cTxt;
-      }
-      if (lastState.mutedVisible !== true) {
-        if (cache.slotMuted) cache.slotMuted.style.display = '';
-        lastState.mutedVisible = true;
-      }
-    } else {
-      if (lastState.comparePrice !== '') {
-        if (cache.slotCompare) cache.slotCompare.textContent = '';
-        lastState.comparePrice = '';
-      }
-      if (lastState.mutedVisible !== false) {
-        if (cache.slotMuted) cache.slotMuted.style.display = 'none';
-        lastState.mutedVisible = false;
-      }
-    }
-  }
-
-  /* ── WIDGET VISIBILITY ───────────────────────────────────────── */
-  /*
+    /* ── WIDGET VISIBILITY ───────────────────────────────────────── */
+    /*
     Both functions guard setAttribute with a lastState check.
     setAttribute fires a DOM mutation even if the value is identical
     to what's already there. External observers (app / theme) can catch
@@ -611,139 +630,163 @@
     back to our observers.prices — completing the blinking loop.
     The guard ensures we only setAttribute when the state actually changes.
   */
-  function showWidget() {
-    if (!cache.widget) return;
-    hydrateWidget();
-    if (lastState.widgetVisible !== 'active') {
-      cache.widget.setAttribute('data-pdw-state', 'active');
-      lastState.widgetVisible = 'active';
+    function showWidget() {
+      if (!cache.widget) return;
+      hydrateWidget();
+      if (lastState.widgetVisible !== 'active') {
+        cache.widget.setAttribute('data-pdw-state', 'active');
+        lastState.widgetVisible = 'active';
+      }
     }
-  }
 
-  function hideWidget() {
-    if (!cache.widget) return;
-    if (lastState.widgetVisible !== 'idle') {
-      cache.widget.setAttribute('data-pdw-state', 'idle');
-      lastState.widgetVisible = 'idle';
-      /*
+    function hideWidget() {
+      if (!cache.widget) return;
+      if (lastState.widgetVisible !== 'idle') {
+        cache.widget.setAttribute('data-pdw-state', 'idle');
+        lastState.widgetVisible = 'idle';
+        /*
         Reset tracked slot values so the next showWidget() writes
         fresh content to the DOM (the widget may have been removed
         and re-added by the Section Rendering API between hide and show).
       */
-      lastState.preorderPrice = null;
-      lastState.comparePrice  = null;
-      lastState.badge         = null;
-      lastState.mutedVisible  = null;
+        lastState.preorderPrice = null;
+        lastState.comparePrice = null;
+        lastState.badge = null;
+        lastState.mutedVisible = null;
+      }
     }
-  }
 
-  /* ── EVALUATE ────────────────────────────────────────────────── */
-  function evaluateVariant() {
-    if (isPreorderVariant() && hasDiscount()) {
-      showWidget();
-    } else {
-      hideWidget();
+    /* ── EVALUATE ────────────────────────────────────────────────── */
+    function evaluateVariant() {
+      if (isPreorderVariant() && hasDiscount()) {
+        showWidget();
+      } else {
+        hideWidget();
+      }
     }
-  }
 
-  var debouncedEvaluate = debounce(evaluateVariant, CONFIG.debounceMs);
-
-  /* ── WATCHERS ────────────────────────────────────────────────── */
-  function watchForVariantChanges() {
-    var pricesBlock = document.querySelector(CONFIG.pricesBlock);
+    function stopPoller() {
+      if (poller) {
+        clearInterval(poller);
+        poller = null;
+      }
+    }
 
     /*
+    Bounded safety net for the app's async / node-replacing price injection.
+    Observers can miss it when the app rebuilds the prices-block node;
+    polling re-evaluates regardless of how the DOM changed.
+    evaluateVariant() is lastState-guarded, so repeated calls cause no
+    extra DOM writes and no blinking. Stops once active or after 5s.
+  */
+    function startPoller() {
+      stopPoller();
+      var elapsed = 0;
+      poller = setInterval(function () {
+        elapsed += CONFIG.pollInterval;
+        evaluateVariant();
+        if (elapsed >= CONFIG.pollMaxMs || (cache.widget && cache.widget.getAttribute('data-pdw-state') === 'active')) {
+          stopPoller();
+        }
+      }, CONFIG.pollInterval);
+    }
+    var debouncedEvaluate = debounce(evaluateVariant, CONFIG.debounceMs);
+
+    /* ── WATCHERS ────────────────────────────────────────────────── */
+    function watchForVariantChanges() {
+      var pricesBlock = document.querySelector(CONFIG.pricesBlock);
+
+      /*
       observers.payment: watches the payment button container for class
       changes only. Essential Preorder toggles inactiveClass on this
       element when switching between preorder and regular variants.
       Narrow attributeFilter means we only react to meaningful signals,
       not to unrelated DOM activity.
     */
-    if (cache.payment) {
-      observers.payment = new MutationObserver(debouncedEvaluate);
-      observers.payment.observe(cache.payment, {
-        attributes:      true,
-        attributeFilter: ['class']
-      });
-    }
+      if (cache.payment) {
+        observers.payment = new MutationObserver(debouncedEvaluate);
+        observers.payment.observe(cache.payment, {
+          attributes: true,
+          attributeFilter: ['class'],
+        });
+      }
 
-    /*
+      /*
       observers.prices: watches the prices-block subtree for any content
       change. This fires when the app updates price text during a variant
       switch. Both observers call debouncedEvaluate (not separate hydrate)
       so hasDiscount() always runs against the fully-updated DOM.
     */
-    if (pricesBlock) {
-      observers.prices = new MutationObserver(debouncedEvaluate);
-      observers.prices.observe(pricesBlock, {
-        childList:     true,
-        subtree:       true,
-        attributes:    true,
-        characterData: true
-      });
-    }
+      if (pricesBlock) {
+        observers.prices = new MutationObserver(debouncedEvaluate);
+        observers.prices.observe(pricesBlock, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          characterData: true,
+        });
+      }
 
-    /*
-      observers.fallback: used ONLY when one or both primary targets are
-      absent at init time (app still rendering). Watches document.body
-      childList only — not attributes, not characterData — so it doesn't
-      catch style/class churn. Self-destructs once both targets are found.
-    */
-    if (!cache.payment || !pricesBlock) {
-      var debouncedFallback = debounce(function () {
-        var p = document.querySelector(CONFIG.paymentBtn);
-        var b = document.querySelector(CONFIG.pricesBlock);
-        if (p && b) {
-          if (observers.fallback) {
-            observers.fallback.disconnect();
-            observers.fallback = null;
+      // Fallback ONLY depends on the prices block. The payment button is
+      // optional — dynamic checkout (Shop Pay) may be disabled, so
+      // .shopify-payment-button never exists on some themes (e.g. Ritual).
+      if (!pricesBlock) {
+        var debouncedFallback = debounce(function () {
+          var b = document.querySelector(CONFIG.pricesBlock);
+          if (b) {
+            if (observers.fallback) {
+              observers.fallback.disconnect();
+              observers.fallback = null;
+            }
+            var p = document.querySelector(CONFIG.paymentBtn);
+            if (p) cache.payment = p;
+            watchForVariantChanges(); // prices now exist → attaches prices observer
+            evaluateVariant(); // re-check now that prices are in the DOM
           }
-          cache.payment = p;
-          watchForVariantChanges();
-        }
-      }, CONFIG.debounceMs);
+        }, CONFIG.debounceMs);
 
-      observers.fallback = new MutationObserver(debouncedFallback);
-      observers.fallback.observe(document.body, { childList: true, subtree: true });
+        observers.fallback = new MutationObserver(debouncedFallback);
+        observers.fallback.observe(document.body, { childList: true, subtree: true });
+      }
     }
-  }
 
-  function watchForVariantEvent() {
-    /*
+    function watchForVariantEvent() {
+      /*
       Some themes (and the Essential Preorder app itself) dispatch a
       'variant:changed' custom event on the product form. This provides
       an additional signal for themes that don't use Section Rendering.
     */
-    var form = document.querySelector(CONFIG.productForm);
-    if (form) form.addEventListener('variant:changed', debouncedEvaluate);
-  }
+      var form = document.querySelector(CONFIG.productForm);
+      if (form) form.addEventListener('variant:changed', debouncedEvaluate);
+    }
 
-  /* ── INIT / REINIT ───────────────────────────────────────────── */
-  function init() {
-    /* Guardrail: Essential Preorder app embed must be present */
-    if (!document.querySelector(CONFIG.appEmbed)) return;
-    /* Widget element must exist */
-    if (!document.querySelector(CONFIG.widget)) return;
+    /* ── INIT / REINIT ───────────────────────────────────────────── */
+    function init() {
+      /* Guardrail: Essential Preorder app embed must be present */
+      if (!document.querySelector(CONFIG.appEmbed)) return;
+      /* Widget element must exist */
+      if (!document.querySelector(CONFIG.widget)) return;
 
-    buildCache();
-    evaluateVariant();        /* immediate check on page / section load */
-    watchForVariantChanges(); /* persistent scoped observers             */
-    watchForVariantEvent();   /* variant:changed form event              */
-  }
+      buildCache();
+      evaluateVariant(); /* immediate check on page / section load */
+      watchForVariantChanges(); /* persistent scoped observers             */
+      watchForVariantEvent(); /* variant:changed form event              */
+      startPoller();
+    }
 
-  function reinit() {
-    /*
+    function reinit() {
+      /*
       teardown() first — disconnects stale observers from the previous
       section render and nulls cached refs. Without this, stale observers
       on detached nodes would keep firing alongside the new ones.
       teardown() is idempotent: safe to call even if nothing is active.
     */
-    teardown();
-    init();
-  }
+      teardown();
+      init();
+    }
 
-  /* ── MODULE GUARD ────────────────────────────────────────────── */
-  /*
+    /* ── MODULE GUARD ────────────────────────────────────────────── */
+    /*
     Object guard pattern (from design1 — QA-passed):
     window.__pwModule is an object { reinit } not a boolean.
 
@@ -757,38 +800,33 @@
       Call reinit() directly: teardown stale state, init against fresh DOM.
       This is the critical fix for "widget dies after variant switch" bug.
   */
-  if (!window.__pwModule) {
+    if (!window.__pwModule) {
+      /* CASE A */
+      window.__pwModule = { reinit: reinit };
 
-    /* CASE A */
-    window.__pwModule = { reinit: reinit };
-
-    /*
+      /*
       shopify:section:load — Horizon Section Rendering API.
       Fired when any section finishes re-rendering after a variant switch.
       Primary trigger for Horizon-based stores.
     */
-    document.addEventListener('shopify:section:load', reinit);
+      document.addEventListener('shopify:section:load', reinit);
 
-    /*
+      /*
       page:loaded — Horizon's soft-navigation completion event.
       Some Horizon versions fire this instead of (or alongside)
       shopify:section:load. Calling reinit() twice is safe:
       teardown() is idempotent and the debounce absorbs rapid bursts.
     */
-    document.addEventListener('page:loaded', reinit);
+      document.addEventListener('page:loaded', reinit);
 
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', init);
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
     } else {
-      init();
+      /* CASE B — section re-render, reinit against fresh DOM */
+      window.__pwModule.reinit();
     }
-
-  } else {
-
-    /* CASE B — section re-render, reinit against fresh DOM */
-    window.__pwModule.reinit();
-
-  }
-
-})();
+  })();
 </script>
